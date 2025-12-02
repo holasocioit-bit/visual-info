@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  research-vault:
+    build: .
+    container_name: research_vault_app
+    restart: unless-stopped
+    # No exponemos puertos al host directamente, Traefik se encarga del enrutamiento interno
+    expose:
+      - "80"
+    labels:
+      - "traefik.enable=true"
+      
+      # Router HTTPS (Secure)
+      - "traefik.http.routers.research-vault.rule=Host(`view.socio.it.com`)"
+      - "traefik.http.routers.research-vault.entrypoints=websecure"
+      - "traefik.http.routers.research-vault.tls.certresolver=lets"
+      
+      # Configuración del Servicio (El contenedor expone el puerto 80 internamente vía Nginx)
+      - "traefik.http.services.research-vault.loadbalancer.server.port=80"
+      
+      # Middleware para forzar HTTPS
+      - "traefik.http.middlewares.force-https.redirectscheme.scheme=https"
+      
+      # Router HTTP (para redirección a HTTPS)
+      - "traefik.http.routers.research-vault-http.rule=Host(`view.socio.it.com`)"
+      - "traefik.http.routers.research-vault-http.entrypoints=web"
+      - "traefik.http.routers.research-vault-http.middlewares=force-https"
+
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
