@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Plus, LayoutGrid, List, BarChart2, Trash2, 
-  Download, Search, BookOpen, Layers, Save, CheckCircle2, RotateCcw, Database
+  Download, Search, BookOpen, Layers, Save, Cloud, RefreshCw, WifiOff, HardDrive
 } from 'lucide-react';
 import { Sheet, Paper, ViewMode } from './types';
 import { Importer } from './components/Importer';
 import { PaperCard } from './components/PaperCard';
 import { Analytics } from './components/Analytics';
 import { generateId, downloadJson } from './utils';
+
+const LOCAL_STORAGE_KEY = 'research_vault_db';
 
 const App: React.FC = () => {
   // State
@@ -16,60 +18,103 @@ const App: React.FC = () => {
   const [showImporter, setShowImporter] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.GRID);
   const [searchQuery, setSearchQuery] = useState('');
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
-  // Initial Load with Data Migration/Sanitization
-  useEffect(() => {
-    const saved = localStorage.getItem('researchVaultData');
-    if (saved) {
-      try {
-        const parsedSheets = JSON.parse(saved);
-        if (Array.isArray(parsedSheets)) {
-          // SANITIZATION: Check for duplicate IDs which break React keys and deletion
-          const seenIds = new Set<string>();
-          
-          const validatedSheets = parsedSheets.map((s: any) => ({
-            ...s,
-            papers: Array.isArray(s.papers) ? s.papers.map((p: any) => {
-              // FORCE STRING: Handle legacy data where ID might be a number
-              let currentId = p.id ? String(p.id).trim() : undefined;
-              
-              // If ID is missing OR we have seen this ID before, generate a NEW one
-              if (!currentId || seenIds.has(currentId)) {
-                currentId = generateId(); 
-              }
-              seenIds.add(currentId);
-              return { ...p, id: currentId };
-            }) : []
-          }));
+  // --- DATA MANAGEMENT ---
 
-          setSheets(validatedSheets);
-          if (validatedSheets.length > 0 && !activeSheetId) {
-             setActiveSheetId(validatedSheets[0].id);
+  const sanitizeData = (rawSheets: any[]): Sheet[] => {
+      const seenIds = new Set<string>();
+      return rawSheets.map((s: any) => ({
+        ...s,
+        papers: Array.isArray(s.papers) ? s.papers.map((p: any) => {
+          let currentId = p.id ? String(p.id).trim() : undefined;
+          if (!currentId || seenIds.has(currentId)) {
+            currentId = generateId(); 
           }
+          seenIds.add(currentId);
+          return { ...p, id: currentId };
+        }) : []
+      }));
+  };
+
+  const fetchData = async () => {
+    try {
+      // 1. Try fetching from Server
+      const response = await fetch('/api/data');
+      if (!response.ok) throw new Error("Network response was not ok");
+      
+      const parsedSheets = await response.json();
+      
+      if (Array.isArray(parsedSheets)) {
+        const validatedSheets = sanitizeData(parsedSheets);
+        setSheets(validatedSheets);
+        if (validatedSheets.length > 0 && !activeSheetId) {
+           setActiveSheetId(validatedSheets[0].id);
         }
-      } catch (e) {
-        console.error("Failed to load saved data", e);
       }
+      setIsOfflineMode(false);
+    } catch (e) {
+      console.warn("Server unreachable, falling back to Local Storage.", e);
+      // 2. Fallback to Local Storage
+      setIsOfflineMode(true);
+      const localData = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (localData) {
+          try {
+              const parsed = JSON.parse(localData);
+              if (Array.isArray(parsed)) {
+                  setSheets(sanitizeData(parsed));
+                  if (parsed.length > 0 && !activeSheetId) setActiveSheetId(parsed[0].id);
+              }
+          } catch (err) {
+              console.error("Local storage corrupted", err);
+          }
+      }
+    } finally {
+      setIsInitialized(true);
     }
-    // Mark as initialized so auto-save can start working safely
-    setIsInitialized(true);
+  };
+
+  const saveData = useCallback(async (dataToSave: Sheet[]) => {
+    setIsSaving(true);
+    
+    // Always save to local storage as backup/cache
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(dataToSave));
+
+    if (!isOfflineMode) {
+        try {
+            await fetch('/api/data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(dataToSave)
+            });
+        } catch (e) {
+            console.error("Failed to sync to server", e);
+            // Don't alert user too aggressively, just log it.
+            // We might want to switch to offline mode here if it persists.
+        }
+    }
+    
+    setIsSaving(false);
+  }, [isOfflineMode]);
+
+  // Initial Load
+  useEffect(() => {
+    fetchData();
   }, []);
 
-  // Auto-Save Effect
+  // Debounced Auto-Save
   useEffect(() => {
-    // Only save if we have initialized (loaded previous data)
-    // This prevents overwriting localStorage with [] on initial render
     if (!isInitialized) return;
 
-    try {
-      localStorage.setItem('researchVaultData', JSON.stringify(sheets));
-      setLastSaved(new Date());
-    } catch (e) {
-      console.error("Storage full or error", e);
-    }
-  }, [sheets, isInitialized]);
+    const timeoutId = setTimeout(() => {
+      saveData(sheets);
+    }, 1000); 
+
+    return () => clearTimeout(timeoutId);
+  }, [sheets, isInitialized, saveData]);
+
 
   const activeSheet = sheets.find(s => s.id === activeSheetId);
 
@@ -82,14 +127,15 @@ const App: React.FC = () => {
       createdAt: Date.now(),
       papers
     };
-    setSheets(prev => [...prev, newSheet]);
+    const newSheets = [...sheets, newSheet];
+    setSheets(newSheets);
     setActiveSheetId(newSheet.id);
     setShowImporter(false);
+    saveData(newSheets); // Immediate save
   };
 
   const handleUpdatePaper = (updatedPaper: Paper) => {
     setSheets(prevSheets => prevSheets.map(sheet => {
-      // Small optimization: only update the sheet that contains the paper
       if (sheet.papers.some(p => p.id === updatedPaper.id)) {
         return {
           ...sheet,
@@ -102,24 +148,13 @@ const App: React.FC = () => {
 
   const deletePaper = (paperId: string) => {
     if (!paperId) return;
-    
-    // NOTE: Confirmation is now handled inside PaperCard component for better UX
-    // and to avoid browser blocking 'confirm()' dialogs.
-    
-    const targetId = String(paperId); // Ensure strict string type for comparison
+    const targetId = String(paperId);
 
     setSheets(currentSheets => {
-      // Map through all sheets and remove the paper with the matching ID
       const updatedSheets = currentSheets.map(sheet => ({
         ...sheet,
         papers: sheet.papers.filter(p => String(p.id) !== targetId)
       }));
-      
-      // Force sync save to prevent race conditions or UI lag
-      try {
-        localStorage.setItem('researchVaultData', JSON.stringify(updatedSheets));
-      } catch(e) { console.error("Save error", e); }
-      
       return updatedSheets;
     });
   };
@@ -128,11 +163,9 @@ const App: React.FC = () => {
     e.stopPropagation();
     // eslint-disable-next-line no-restricted-globals
     if (confirm("Are you sure you want to delete this ENTIRE collection?")) {
-      setSheets(currentSheets => {
-        const newSheets = currentSheets.filter(s => s.id !== id);
-        localStorage.setItem('researchVaultData', JSON.stringify(newSheets));
-        return newSheets;
-      });
+      const newSheets = sheets.filter(s => s.id !== id);
+      setSheets(newSheets);
+      saveData(newSheets);
 
       if (activeSheetId === id) {
         setActiveSheetId(null);
@@ -145,16 +178,6 @@ const App: React.FC = () => {
     downloadJson(sheets, `researchvault-backup-${timestamp}`);
   };
 
-  const handleResetApp = () => {
-    // eslint-disable-next-line no-restricted-globals
-    if (confirm("NUCLEAR RESET: This will wipe all data from this browser. Are you sure?")) {
-      localStorage.removeItem('researchVaultData');
-      setSheets([]);
-      setActiveSheetId(null);
-      window.location.reload();
-    }
-  };
-
   const filteredPapers = activeSheet?.papers.filter(p => {
     const q = searchQuery.toLowerCase();
     return (
@@ -165,7 +188,14 @@ const App: React.FC = () => {
   }) || [];
 
   if (!isInitialized) {
-    return <div className="h-screen flex items-center justify-center bg-slate-50 text-slate-400 font-medium animate-pulse">Checking database integrity...</div>;
+    return (
+        <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-4">
+            <div className="animate-spin text-indigo-600">
+                <RefreshCw className="w-8 h-8" />
+            </div>
+            <div className="text-slate-500 font-medium animate-pulse">Loading ResearchVault...</div>
+        </div>
+    );
   }
 
   return (
@@ -178,12 +208,17 @@ const App: React.FC = () => {
             <BookOpen className="w-6 h-6" />
             <span>ResearchVault</span>
           </div>
-          {lastSaved && (
-            <div className="flex items-center gap-1 text-[10px] text-emerald-600 mt-2 font-medium animate-pulse">
-              <CheckCircle2 className="w-3 h-3" />
-              Synced to Storage
-            </div>
-          )}
+          <div className="flex items-center gap-2 mt-2">
+            <span className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${isOfflineMode ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                {isOfflineMode ? <HardDrive className="w-3 h-3" /> : <Cloud className="w-3 h-3" />}
+                {isOfflineMode ? 'Local Mode' : 'Cloud Synced'}
+            </span>
+            {isSaving && (
+                 <span className="text-[10px] text-slate-400 animate-pulse flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Saving...
+                 </span>
+            )}
+          </div>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto">
@@ -237,15 +272,8 @@ const App: React.FC = () => {
             onClick={handleBackup}
             className="w-full flex items-center justify-center gap-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-4 py-2 rounded-lg transition-colors text-xs font-medium mt-3"
           >
-            <Save className="w-3 h-3" /> Backup Data
+            <Save className="w-3 h-3" /> Backup JSON
           </button>
-
-           <button 
-              onClick={handleResetApp}
-              className="w-full flex items-center justify-center gap-2 mt-1 text-xs text-red-400 hover:text-red-600 hover:bg-red-50 py-2 rounded transition-colors"
-            >
-              <RotateCcw className="w-3 h-3" /> Reset App
-            </button>
         </div>
       </aside>
 
@@ -360,7 +388,16 @@ const App: React.FC = () => {
             </div>
             <h2 className="text-3xl font-bold text-slate-800 mb-3 tracking-tight">ResearchVault</h2>
             <p className="text-slate-500 max-w-md text-center mb-10 text-lg">
-              Your personal workspace for organizing and analyzing academic papers from raw JSON data.
+              A shared workspace for organizing academic papers.
+              {isOfflineMode ? (
+                  <span className="block mt-2 text-amber-600 text-sm font-medium bg-amber-50 py-1 px-3 rounded-full mx-auto w-fit">
+                      Running in Local Mode (Offline)
+                  </span>
+              ) : (
+                  <span className="block mt-2 text-emerald-600 text-sm font-medium bg-emerald-50 py-1 px-3 rounded-full mx-auto w-fit">
+                      Connected to Cloud Server
+                  </span>
+              )}
             </p>
             <div className="flex flex-col gap-4 w-full max-w-xs">
               <button 
@@ -368,12 +405,6 @@ const App: React.FC = () => {
                 className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3.5 rounded-xl shadow-lg shadow-indigo-200 font-medium transition-all flex items-center justify-center gap-3 transform hover:-translate-y-0.5"
               >
                 <Plus className="w-5 h-5" /> Import Data
-              </button>
-              <button 
-                onClick={handleBackup}
-                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-3.5 rounded-xl font-medium transition-all flex items-center justify-center gap-2 text-sm"
-              >
-                <Database className="w-5 h-5 text-slate-400" /> Save DB Backup
               </button>
             </div>
           </div>
