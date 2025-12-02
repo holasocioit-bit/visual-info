@@ -1,20 +1,27 @@
-# Usa una imagen oficial de Node.js
-FROM node:20-alpine
+# =============================================================
+# Dockerfile para la aplicación research_vault_app (Node.js)
+# =============================================================
 
-# Crea un directorio de trabajo
+# 1. Usar una imagen base oficial de Node.js (versión 20-slim es ligera)
+FROM node:20-slim
+
+# 2. Establecer el directorio de trabajo dentro del contenedor
 WORKDIR /usr/src/app
 
-# Copia los archivos de dependencias
+# 3. Copiar únicamente los archivos de configuración de dependencias
+#    Esto permite que Docker cachee este paso si las dependencias no cambian.
 COPY package*.json ./
 
-# Instala las dependencias
-RUN npm install --production
+# 4. Instalar todas las dependencias
+#    Este es tu "npm install"
+RUN npm install
 
-# Copia el resto del código de la aplicación
+# 5. Copiar el resto del código de la aplicación al contenedor
 COPY . .
 
-# Expone el puerto que usa tu app (ajusta si es diferente)
-EXPOSE 8079
+# 6. Comando de ejecución final (CMD)
+#    Este es tu "npm run [script]"
 
-# Comando de inicio
-CMD ["npm", "start"]
+# 🚨 MUY IMPORTANTE: Reemplaza 'dev' por el nombre real del script 
+#    que inicia tu aplicación en tu archivo package.json (ej: 'server', 'prod', 'start-server').
+CMD [ "npm", "run", "dev" ]
