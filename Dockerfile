@@ -24,4 +24,4 @@ COPY . .
 
 # 🚨 MUY IMPORTANTE: Reemplaza 'dev' por el nombre real del script 
 #    que inicia tu aplicación en tu archivo package.json (ej: 'server', 'prod', 'start-server').
-CMD [ "npm", "run", "dev" ]
+ENTRYPOINT [ "npm", "run", "dev" ]
