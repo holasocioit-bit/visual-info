@@ -6,27 +6,18 @@ services:
     container_name: research_vault_app
     restart: unless-stopped
     environment:
-      - PORT=3000
+      - PORT=80               # <--- CAMBIO CRÍTICO: Node escuchará en el 80
+      - DATA_DIR=/app/data
+      - UPLOADS_DIR=/app/uploads  # Definimos la ruta de uploads
     volumes:
       - research_data:/app/data
+      - research_uploads:/app/uploads # <--- Nuevo volumen montado
     labels:
       - "traefik.enable=true"
+      # ... (tus otras etiquetas de host y tls) ...
       
-      # Router HTTPS (Secure)
-      - "traefik.http.routers.research-vault.rule=Host(`view.socio.it.com`)"
-      - "traefik.http.routers.research-vault.entrypoints=websecure"
-      - "traefik.http.routers.research-vault.tls.certresolver=lets"
-      
-      # Load Balancer Service - Points to port 3000 inside the container
+      # MANTENEMOS ESTO EN 80 (Opción B)
       - "traefik.http.services.research-vault.loadbalancer.server.port=80"
-      
-      # Middleware to force HTTPS
-      - "traefik.http.middlewares.force-https.redirectscheme.scheme=https"
-      
-      # Router HTTP (redirects to HTTPS)
-      - "traefik.http.routers.research-vault-http.rule=Host(`view.socio.it.com`)"
-      - "traefik.http.routers.research-vault-http.entrypoints=web"
-      - "traefik.http.routers.research-vault-http.middlewares=force-https"
 
     networks:
       - web
@@ -37,4 +28,6 @@ networks:
 
 volumes:
   research_data:
+    driver: local
+  research_uploads:  # <--- Creamos el volumen persistente
     driver: local
