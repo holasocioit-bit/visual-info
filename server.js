@@ -10,6 +10,16 @@ const app = express();
 // Using 3001 as default to avoid permission issues with port 80 on local dev
 const PORT = process.env.PORT || 3001; 
 const DATA_DIR = process.env.DATA_DIR || './data';
+const UPLOADS_DIR = process.env.UPLOADS_DIR || './uploads';
+
+if (!fs.existsSync(UPLOADS_DIR)) {
+  try {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    console.log("Directorio de uploads creado en:", UPLOADS_DIR);
+  } catch (err) {
+    console.error("Error creando directorio uploads:", err);
+  }
+}
 const DATA_FILE = path.join(DATA_DIR, 'db.json');
 
 // Ensure data directory exists
