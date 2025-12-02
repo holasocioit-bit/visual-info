@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     # No exponemos puertos al host directamente, Traefik se encarga del enrutamiento interno
     expose:
-      - "80"
+      - "5173:5173"
     labels:
       - "traefik.enable=true"
       
@@ -17,7 +17,7 @@ services:
       - "traefik.http.routers.research-vault.tls.certresolver=lets"
       
       # Configuración del Servicio (El contenedor expone el puerto 80 internamente vía Nginx)
-      - "traefik.http.services.research-vault.loadbalancer.server.port=80"
+      - "traefik.http.services.research-vault.loadbalancer.server.port=5173:5173"
       
       # Middleware para forzar HTTPS
       - "traefik.http.middlewares.force-https.redirectscheme.scheme=https"
