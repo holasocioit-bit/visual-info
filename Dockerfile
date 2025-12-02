@@ -1,33 +1,36 @@
 # =============================================================
-# Dockerfile para la aplicación visual-info-research-vault (Vite/Node.js)
+# ETAPA 1: BUILDER (Construcción y Optimización de Archivos)
 # =============================================================
+FROM node:20-alpine AS builder
 
-# 1. IMAGEN BASE
-# Usamos Node 20 slim, que es una versión reciente y ligera.
-FROM node:20-slim
+WORKDIR /app
 
-# 2. DIRECTORIO DE TRABAJO
-# Establece el directorio de trabajo dentro del contenedor.
-WORKDIR /usr/src/app
-
-# 3. CACHE DE DEPENDENCIAS
-# Copiamos primero los archivos package.json y package-lock.json.
-# Esto asegura que Docker no reinstale las dependencias (el paso RUN npm install) 
-# a menos que estos archivos cambien, mejorando la velocidad de construcción.
+# Copiar archivos de configuración para aprovechar el caché
 COPY package*.json ./
 
-# 4. INSTALACIÓN DE DEPENDENCIAS
+# Instalar dependencias
 RUN npm install
 
-# 5. CÓDIGO DE LA APLICACIÓN
-# Copia el resto del código del proyecto al contenedor.
+# Copiar el código fuente completo
 COPY . .
 
-# 6. PUERTO DE EXPOSICIÓN
-# Documenta el puerto en el que correrá la aplicación (Vite por defecto).
-EXPOSE 5173
+# Ejecutar el script de construcción de tu package.json
+# Esto crea la carpeta 'dist'
+RUN npm run build
 
-# 7. COMANDO DE INICIO (ENTRYPOINT - SOLUCIÓN AL ERROR)
-# ENTRYPOINT fuerza la ejecución de 'npm run dev', ignorando el script 'start' faltante.
-# Esto inicia tu servidor de desarrollo/producción con Vite.
-ENTRYPOINT [ "npm", "run", "dev" ]
+# =============================================================
+# ETAPA 2: PRODUCTION (Servidor Web Ligero)
+# =============================================================
+# Usamos Nginx, que es un servidor web muy rápido y ligero.
+FROM nginx:alpine
+
+# 1. Copiar los archivos compilados desde la etapa 'builder'
+# La ruta /usr/share/nginx/html es donde Nginx busca los archivos estáticos por defecto.
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# 2. Exponer el puerto de Nginx
+EXPOSE 80
+
+# 3. Comando de inicio de Nginx (por defecto)
+# Nginx se inicia automáticamente con el comando CMD predefinido en la imagen nginx:alpine.
+# CMD ["nginx", "-g", "daemon off;"]
